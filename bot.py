@@ -1,8 +1,9 @@
 import asyncio
+import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN = "8241261887:AAFiBsjhU1z1b2sTdRso-fO-uiQI60oN4Dc"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 DELETE_AFTER = 120  # 2 minutes
 
@@ -69,4 +70,4 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
 
     print("Bot running...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
