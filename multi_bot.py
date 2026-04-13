@@ -13,6 +13,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress asyncio cancellation warnings
+logging.getLogger("telegram.ext.Application").setLevel(logging.ERROR)
+
 # Get bot tokens
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
@@ -303,16 +306,20 @@ async def main():
     logger.info(f"Bot 2 (RDR2 Content): {len(BOT2_DATA)} mixed items + {len(BOT2_FILES)} files")
     logger.info("=" * 50)
     
-    # Start polling for both bots
-    polling_tasks = [
-        app1.updater.start_polling(drop_pending_updates=True),
-        app2.updater.start_polling(drop_pending_updates=True)
-    ]
-    
-    # Keep running until interrupted
+    # Run both bots indefinitely
     try:
-        await asyncio.gather(*polling_tasks)
-    except KeyboardInterrupt:
+        # Create tasks for polling
+        task1 = asyncio.create_task(app1.updater.start_polling(drop_pending_updates=True))
+        task2 = asyncio.create_task(app2.updater.start_polling(drop_pending_updates=True))
+        
+        # Wait for both tasks
+        await asyncio.gather(task1, task2)
+    except asyncio.CancelledError:
+        logger.info("Polling tasks cancelled")
+    except Exception as e:
+        logger.error(f"Error in polling: {e}")
+    finally:
+        # Clean shutdown
         logger.info("Shutting down bots...")
         await app1.stop()
         await app2.stop()
