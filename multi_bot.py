@@ -13,9 +13,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Suppress asyncio cancellation warnings
-logging.getLogger("telegram.ext.Application").setLevel(logging.ERROR)
-
 # Get bot tokens
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
@@ -292,11 +289,9 @@ async def main():
     app2.add_handler(CommandHandler("start", bot2_start))
     app2.add_handler(CommandHandler("health", bot2_health))
     
-    # Initialize both bots
+    # Initialize and start both bots
     await app1.initialize()
     await app2.initialize()
-    
-    # Start both bots
     await app1.start()
     await app2.start()
     
@@ -306,25 +301,25 @@ async def main():
     logger.info(f"Bot 2 (RDR2 Content): {len(BOT2_DATA)} mixed items + {len(BOT2_FILES)} files")
     logger.info("=" * 50)
     
-    # Run both bots indefinitely
+    # Start polling
+    await app1.updater.start_polling(drop_pending_updates=True)
+    await app2.updater.start_polling(drop_pending_updates=True)
+    
+    # Keep running until interrupted
     try:
-        # Create tasks for polling
-        task1 = asyncio.create_task(app1.updater.start_polling(drop_pending_updates=True))
-        task2 = asyncio.create_task(app2.updater.start_polling(drop_pending_updates=True))
-        
-        # Wait for both tasks
-        await asyncio.gather(task1, task2)
+        # Create a future that never completes to keep the bots running
+        await asyncio.Event().wait()
     except asyncio.CancelledError:
-        logger.info("Polling tasks cancelled")
-    except Exception as e:
-        logger.error(f"Error in polling: {e}")
+        logger.info("Received cancellation signal")
     finally:
-        # Clean shutdown
         logger.info("Shutting down bots...")
+        await app1.updater.stop()
+        await app2.updater.stop()
         await app1.stop()
         await app2.stop()
         await app1.shutdown()
         await app2.shutdown()
+        logger.info("Bots shut down successfully")
 
 if __name__ == "__main__":
     try:
