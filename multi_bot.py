@@ -3,7 +3,7 @@ import os
 import sys
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.error import TelegramError
@@ -74,13 +74,14 @@ def track_usage(stats, user_id, username, first_name, last_name):
     
     # Update daily stats
     if today not in stats["daily_stats"]:
-        stats["daily_stats"][today] = {"uses": 0, "unique_users": 0}
+        stats["daily_stats"][today] = {"uses": 0, "unique_users": set()}
+    
     stats["daily_stats"][today]["uses"] += 1
     
     # Update user info
     if user_key not in stats["users"]:
         stats["total_users"] += 1
-        stats["daily_stats"][today]["unique_users"] += 1
+        stats["daily_stats"][today]["unique_users"].add(user_key)
         stats["users"][user_key] = {
             "username": username,
             "first_name": first_name,
@@ -90,9 +91,10 @@ def track_usage(stats, user_id, username, first_name, last_name):
             "total_uses": 1
         }
     else:
+        stats["daily_stats"][today]["unique_users"].add(user_key)
         stats["users"][user_key]["last_seen"] = now
         stats["users"][user_key]["total_uses"] += 1
-        stats["users"][user_key]["username"] = username  # Update in case changed
+        stats["users"][user_key]["username"] = username
         stats["users"][user_key]["first_name"] = first_name
         stats["users"][user_key]["last_name"] = last_name
     
@@ -102,41 +104,53 @@ def track_usage(stats, user_id, username, first_name, last_name):
 bot1_stats = load_stats(STATS_FILE_1)
 bot2_stats = load_stats(STATS_FILE_2)
 
+# Convert sets to counts for JSON serialization
+def prepare_stats_for_save(stats):
+    """Convert sets to counts before saving"""
+    stats_copy = stats.copy()
+    stats_copy["daily_stats"] = {}
+    for date, data in stats["daily_stats"].items():
+        stats_copy["daily_stats"][date] = {
+            "uses": data["uses"],
+            "unique_users": len(data["unique_users"]) if isinstance(data["unique_users"], set) else data["unique_users"]
+        }
+    return stats_copy
+
 # ============================================
 # BOT 1 DATA (File sender bot - 31 files)
 # ============================================
 BOT1_FILES = [
-    "BQACAgQAAxkBAAFG9SBp2jDH8yzPdwAB8rp0aD6KwejscpQAAgQIAALv4OBT-OTF_YW72zU7BA",  # Part 1
-    "BQACAgQAAxkBAAFG9R9p2jDHD2vfODRSftPUFL8rbIh_PQACBQgAAu_g4FNg2Q8dJr2zpzsE",  # Part 2
-    "BQACAgQAAxkBAAFG9QJp2jDHeDJ0JVWw5oxGZ7z5C4ojBAACBwgAAu_g4FOBrrYAAVaUr6Q7BA",  # Part 3
-    "BQACAgQAAxkBAAFG9QNp2jDHBXmzAAGXizGja7HaLkm64RsAAggIAALv4OBTugn-DeO-mKE7BA",  # Part 4
-    "BQACAgQAAxkBAAFG9QRp2jDHvyG_oB3t3_iGvA6OkCbuagACCQgAAu_g4FPNWekrlvtvTDsE",  # Part 5
-    "BQACAgQAAxkBAAFG9QVp2jDHRvIXcBJZaC6iIqyUWUDHfgACCggAAu_g4FMpO5ClgY7ygTsE",  # Part 6
-    "BQACAgQAAxkBAAFG9QZp2jDH-dI3tTjMv6fCURLih56LSAACCwgAAu_g4FNm9Gttp1vxwzsE",  # Part 7
-    "BQACAgQAAxkBAAFG9Qdp2jDHCz0lIs7a6dcfeDmixA4qlQACDAgAAu_g4FO_SYvlSaN3vzsE",  # Part 8
-    "BQACAgQAAxkBAAFG9Qhp2jDHRu6kj5YQ8-234uIh-EkO8wACDggAAu_g4FNliw1Y7iK4BjsE",  # Part 9
-    "BQACAgQAAxkBAAFG9Qlp2jDHSMyv63LPqOakq28cI28M8gACDwgAAu_g4FOwHwIqRg5RMjsE",  # Part 10
-    "BQACAgQAAxkBAAFG9Qpp2jDHoICCu6ZgoyDYZ8IAAQNu4VUAAhAIAALv4OBTOmJ0SOcXHGw7BA",  # Part 11
-    "BQACAgQAAxkBAAFG9Qtp2jDHD59qfOyZ66eSSsaHueVqeQACEQgAAu_g4FOJjf9pZfFB1zsE",  # Part 12
-    "BQACAgQAAxkBAAFG9Qxp2jDHEWdEhBudbQetT4mvDyg3xgACEggAAu_g4FOn7eukwbCvOzsE",  # Part 13
-    "BQACAgQAAxkBAAFG9Q1p2jDH8ygtAAExT9tkQdM2wkTbvYsAAhMIAALv4OBTmLtYbLgk7pQ7BA",  # Part 14
-    "BQACAgQAAxkBAAFG9Q5p2jDHnVIy3w4MR0bm3PcTkZ8U_wACFQgAAu_g4FMaCSYdA5kPOjsE",  # Part 15
-    "BQACAgQAAxkBAAFG9Q9p2jDHSb4depGtdYYgiT38MfgSYQACFggAAu_g4FPmuoYP0Ri1ozsE",  # Part 16
-    "BQACAgQAAxkBAAFG9RBp2jDHWdKmBJ6rdP93MTOAbYq7HQACGQgAAu_g4FPUzloxg4xquTsE",  # Part 17
-    "BQACAgQAAxkBAAFG9RFp2jDHC_gB_6IeT9psy_jC3__HqQACGwgAAu_g4FORveYi7-FrBDsE",  # Part 18
-    "BQACAgQAAxkBAAFG9RJp2jDHBdyAeHMdgj863rpbz7Lz1gACHAgAAu_g4FPqHgbz6H_6wjsE",  # Part 19
-    "BQACAgQAAxkBAAFG9RNp2jDHk2U3DJymODjK2yY9CG-1fQACIAgAAu_g4FP5h-MZPsV-zTsE",  # Part 20
-    "BQACAgQAAxkBAAFG9RRp2jDH2PpW7OliRtHgX1DbaUhDiwACIggAAu_g4FOPk5XcPKhM3zsE",  # Part 21
-    "BQACAgQAAxkBAAFG9RVp2jDHCcp-dIRdc97HX0DIr3NrNQACJQgAAu_g4FM7EBC1kw2XBzsE",  # Part 22
-    "BQACAgQAAxkBAAFG9RZp2jDHOIlDRfBGQo_-Nc8BgQq1nQACKAgAAu_g4FPZibXhJClJ5TsE",  # Part 23
-    "BQACAgQAAxkBAAFG9Rdp2jDH8TIgd_L63mZf6R6-M2sxbgACKQgAAu_g4FOAcsn4TbNorzsE",  # Part 24
-    "BQACAgQAAxkBAAFG9Rhp2jDHTRb7ySF06u1N7klBBtBqTwACKwgAAu_g4FPIfq0y1uL3SDsE",  # Part 25
-    "BQACAgQAAxkBAAFG9Rlp2jDHTWISHKaR_PRgqZTuw6GpawACLAgAAu_g4FM0uRx4_T0dbzsE",  # Part 26
-    "BQACAgQAAxkBAAFG9Rpp2jDHCLSYp3RZ1oTm1Q3d9k1a_gACLQgAAu_g4FPxVanIQqZ9gTsE",  # Part 27
-    "BQACAgQAAxkBAAFG9Rtp2jDHjh32dlmP_jCzGGMJzkBfeAACLggAAu_g4FPCabki_y4gxzsE",  # Part 28
-    "BQACAgQAAxkBAAFG9Rxp2jDHvQzaHuIkdU3u1dGSLWm_fgACMQgAAu_g4FPyg4Mj1K-NujsE",  # Part 29
-    "BQACAgQAAxkBAAFG9R1p2jDH3c1biME2CJuj9qP10biswQACMggAAu_g4FOIGscaoqW1KTsE",  # Part 30
-    "BQACAgQAAxkBAAFG9R5p2jDHEaEVbim349CVIqGO8CgLnAACMwgAAu_g4FNURhB7jAXg5TsE",  # Part 31
+    "BQACAgQAAxkBAAFG9SBp2jDH8yzPdwAB8rp0aD6KwejscpQAAgQIAALv4OBT-OTF_YW72zU7BA",
+    "BQACAgQAAxkBAAFG9R9p2jDHD2vfODRSftPUFL8rbIh_PQACBQgAAu_g4FNg2Q8dJr2zpzsE",
+    "BQACAgQAAxkBAAFG9QJp2jDHeDJ0JVWw5oxGZ7z5C4ojBAACBwgAAu_g4FOBrrYAAVaUr6Q7BA",
+    "BQACAgQAAxkBAAFG9QNp2jDHBXmzAAGXizGja7HaLkm64RsAAggIAALv4OBTugn-DeO-mKE7BA",
+    "BQACAgQAAxkBAAFG9QRp2jDHvyG_oB3t3_iGvA6OkCbuagACCQgAAu_g4FPNWekrlvtvTDsE",
+    "BQACAgQAAxkBAAFG9QVp2jDHRvIXcBJZaC6iIqyUWUDHfgACCggAAu_g4FMpO5ClgY7ygTsE",
+    "BQACAgQAAxkBAAFG9QZp2jDH-dI3tTjMv6fCURLih56LSAACCwgAAu_g4FNm9Gttp1vxwzsE",
+    "BQACAgQAAxkBAAFG9Qdp2jDHCz0lIs7a6dcfeDmixA4qlQACDAgAAu_g4FO_SYvlSaN3vzsE",
+    "BQACAgQAAxkBAAFG9Qhp2jDHRu6kj5YQ8-234uIh-EkO8wACDggAAu_g4FNliw1Y7iK4BjsE",
+    "BQACAgQAAxkBAAFG9Qlp2jDHSMyv63LPqOakq28cI28M8gACDwgAAu_g4FOwHwIqRg5RMjsE",
+    "BQACAgQAAxkBAAFG9Qpp2jDHoICCu6ZgoyDYZ8IAAQNu4VUAAhAIAALv4OBTOmJ0SOcXHGw7BA",
+    "BQACAgQAAxkBAAFG9Qtp2jDHD59qfOyZ66eSSsaHueVqeQACEQgAAu_g4FOJjf9pZfFB1zsE",
+    "BQACAgQAAxkBAAFG9Qxp2jDHEWdEhBudbQetT4mvDyg3xgACEggAAu_g4FOn7eukwbCvOzsE",
+    "BQACAgQAAxkBAAFG9Q1p2jDH8ygtAAExT9tkQdM2wkTbvYsAAhMIAALv4OBTmLtYbLgk7pQ7BA",
+    "BQACAgQAAxkBAAFG9Q5p2jDHnVIy3w4MR0bm3PcTkZ8U_wACFQgAAu_g4FMaCSYdA5kPOjsE",
+    "BQACAgQAAxkBAAFG9Q9p2jDHSb4depGtdYYgiT38MfgSYQACFggAAu_g4FPmuoYP0Ri1ozsE",
+    "BQACAgQAAxkBAAFG9RBp2jDHWdKmBJ6rdP93MTOAbYq7HQACGQgAAu_g4FPUzloxg4xquTsE",
+    "BQACAgQAAxkBAAFG9RFp2jDHC_gB_6IeT9psy_jC3__HqQACGwgAAu_g4FORveYi7-FrBDsE",
+    "BQACAgQAAxkBAAFG9RJp2jDHBdyAeHMdgj863rpbz7Lz1gACHAgAAu_g4FPqHgbz6H_6wjsE",
+    "BQACAgQAAxkBAAFG9RNp2jDHk2U3DJymODjK2yY9CG-1fQACIAgAAu_g4FP5h-MZPsV-zTsE",
+    "BQACAgQAAxkBAAFG9RRp2jDH2PpW7OliRtHgX1DbaUhDiwACIggAAu_g4FOPk5XcPKhM3zsE",
+    "BQACAgQAAxkBAAFG9RVp2jDHCcp-dIRdc97HX0DIr3NrNQACJQgAAu_g4FM7EBC1kw2XBzsE",
+    "BQACAgQAAxkBAAFG9RZp2jDHOIlDRfBGQo_-Nc8BgQq1nQACKAgAAu_g4FPZibXhJClJ5TsE",
+    "BQACAgQAAxkBAAFG9Rdp2jDH8TIgd_L63mZf6R6-M2sxbgACKQgAAu_g4FOAcsn4TbNorzsE",
+    "BQACAgQAAxkBAAFG9Rhp2jDHTRb7ySF06u1N7klBBtBqTwACKwgAAu_g4FPIfq0y1uL3SDsE",
+    "BQACAgQAAxkBAAFG9Rlp2jDHTWISHKaR_PRgqZTuw6GpawACLAgAAu_g4FM0uRx4_T0dbzsE",
+    "BQACAgQAAxkBAAFG9Rpp2jDHCLSYp3RZ1oTm1Q3d9k1a_gACLQgAAu_g4FPxVanIQqZ9gTsE",
+    "BQACAgQAAxkBAAFG9Rtp2jDHjh32dlmP_jCzGGMJzkBfeAACLggAAu_g4FPCabki_y4gxzsE",
+    "BQACAgQAAxkBAAFG9Rxp2jDHvQzaHuIkdU3u1dGSLWm_fgACMQgAAu_g4FPyg4Mj1K-NujsE",
+    "BQACAgQAAxkBAAFG9R1p2jDH3c1biME2CJuj9qP10biswQACMggAAu_g4FOIGscaoqW1KTsE",
+    "BQACAgQAAxkBAAFG9R5p2jDHEaEVbim349CVIqGO8CgLnAACMwgAAu_g4FNURhB7jAXg5TsE",
 ]
 
 # ============================================
@@ -157,82 +171,24 @@ BOT2_DATA = [
 BOT2_FILES = [
     "BQACAgUAAxkBAAMHadyLeDBk08V6ghNJ0szmS91qEzMAAn8BAAJJdJBUxb3iL52a-Ko7BA",
     "BQACAgUAAxkBAAMIadyLeDW9HZn2kuzogi9VOAOnngADggEAAkl0kFSEnOkCkBhQ4jsE",
-    # ... (truncated for brevity - keep all your 67 file IDs here)
+    "BQACAgUAAxkBAAMJadyLeDEAAaHTSd4R5toFG66ow6xyAAKGAQACSXSQVMG6JKJR5gp6OwQ",
+    "BQACAgUAAxkBAAMKadyLeDLWEAoxPW2gHHmgVLbrs5kAAocBAAJJdJBUo7aznY4WyLI7BA",
+    "BQACAgUAAxkBAAMLadyLePNVVv8sF9aNAAFYHdsFYu1jAAKrAQACSXSQVLJsQiP897LAOwQ",
     "BQACAgQAAxkBAANJadyLeHs62JJAIDCzw-xGSjEGfFwAAtwIAALhK5BQzcP1girsROE7BA",
 ]
 
 # ============================================
-# STATS COMMAND HANDLERS
-# ============================================
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_name: str, stats: dict, stats_file: str):
-    """Generic stats command handler"""
-    user = update.effective_user
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_stats = stats["daily_stats"].get(today, {"uses": 0, "unique_users": 0})
-    
-    # Get top users (most active)
-    sorted_users = sorted(
-        stats["users"].items(), 
-        key=lambda x: x[1]["total_uses"], 
-        reverse=True
-    )[:10]
-    
-    message = f"📊 **{bot_name} Statistics**\n\n"
-    message += f"👥 **Total Unique Users:** {stats['total_users']}\n"
-    message += f"🔄 **Total Uses:** {stats['total_uses']}\n\n"
-    message += f"📅 **Today's Stats:**\n"
-    message += f"   • Uses: {today_stats['uses']}\n"
-    message += f"   • Unique Users: {today_stats['unique_users']}\n\n"
-    
-    if sorted_users:
-        message += "🏆 **Top 10 Most Active Users:**\n"
-        for i, (user_id, data) in enumerate(sorted_users, 1):
-            name = data['first_name']
-            if data['last_name']:
-                name += f" {data['last_name']}"
-            if data['username']:
-                name += f" (@{data['username']})"
-            message += f"{i}. {name}: {data['total_uses']} uses\n"
-    
-    # Add last 7 days summary
-    message += "\n📈 **Last 7 Days:**\n"
-    from datetime import timedelta
-    for i in range(7):
-        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_stats = stats["daily_stats"].get(date, {"uses": 0, "unique_users": 0})
-        day_name = (datetime.now() - timedelta(days=i)).strftime("%a")
-        message += f"   {day_name}: {day_stats['uses']} uses ({day_stats['unique_users']} users)\n"
-    
-    await update.message.reply_text(message, parse_mode="Markdown")
-
-async def bot1_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bot 1 stats command"""
-    await stats_command(update, context, "File Sender Bot", bot1_stats, STATS_FILE_1)
-
-async def bot2_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bot 2 stats command"""
-    await stats_command(update, context, "RDR2 Content Bot", bot2_stats, STATS_FILE_2)
-
-# ============================================
-# BOT 1 HANDLERS (File Sender Bot)
+# BOT 1 HANDLERS
 # ============================================
 async def bot1_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # Track usage
     global bot1_stats
-    bot1_stats = track_usage(
-        bot1_stats, 
-        user.id, 
-        user.username, 
-        user.first_name, 
-        user.last_name
-    )
-    save_stats(STATS_FILE_1, bot1_stats)
+    bot1_stats = track_usage(bot1_stats, user.id, user.username, user.first_name, user.last_name)
+    save_stats(STATS_FILE_1, prepare_stats_for_save(bot1_stats))
     
-    logger.info(f"[BOT1] User {user.id} (@{user.username}) requested files (Use #{bot1_stats['users'][str(user.id)]['total_uses']})")
+    logger.info(f"[BOT1] User {user.id} (@{user.username}) requested files")
     
     if not BOT1_FILES:
         await update.message.reply_text("❌ No files configured yet!")
@@ -274,31 +230,50 @@ async def bot1_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bot1_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"✅ Bot 1 (File Sender) running\n"
+        f"✅ Bot 1 (File Sender) is running!\n"
         f"📊 Files: {len(BOT1_FILES)}\n"
         f"👥 Total users: {bot1_stats['total_users']}\n"
         f"🔄 Total uses: {bot1_stats['total_uses']}"
     )
 
+async def bot1_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_data = bot1_stats["daily_stats"].get(today, {"uses": 0, "unique_users": set()})
+    today_users = len(today_data["unique_users"]) if isinstance(today_data["unique_users"], set) else today_data.get("unique_users", 0)
+    
+    sorted_users = sorted(
+        bot1_stats["users"].items(), 
+        key=lambda x: x[1]["total_uses"], 
+        reverse=True
+    )[:10]
+    
+    message = f"📊 **Bot 1 (File Sender) Statistics**\n\n"
+    message += f"👥 Total Unique Users: {bot1_stats['total_users']}\n"
+    message += f"🔄 Total Uses: {bot1_stats['total_uses']}\n\n"
+    message += f"📅 Today: {today_data['uses']} uses ({today_users} users)\n\n"
+    
+    if sorted_users:
+        message += "🏆 Top 10 Users:\n"
+        for i, (user_id, data) in enumerate(sorted_users, 1):
+            name = data['first_name']
+            if data.get('username'):
+                name += f" (@{data['username']})"
+            message += f"{i}. {name}: {data['total_uses']} uses\n"
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
+
 # ============================================
-# BOT 2 HANDLERS (RDR2 Mixed Content Bot)
+# BOT 2 HANDLERS
 # ============================================
 async def bot2_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # Track usage
     global bot2_stats
-    bot2_stats = track_usage(
-        bot2_stats, 
-        user.id, 
-        user.username, 
-        user.first_name, 
-        user.last_name
-    )
-    save_stats(STATS_FILE_2, bot2_stats)
+    bot2_stats = track_usage(bot2_stats, user.id, user.username, user.first_name, user.last_name)
+    save_stats(STATS_FILE_2, prepare_stats_for_save(bot2_stats))
     
-    logger.info(f"[BOT2] User {user.id} (@{user.username}) requested content (Use #{bot2_stats['users'][str(user.id)]['total_uses']})")
+    logger.info(f"[BOT2] User {user.id} (@{user.username}) requested content")
     
     total_items = len(BOT2_DATA) + len(BOT2_FILES)
     
@@ -333,7 +308,7 @@ async def bot2_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             msg = await update.message.reply_document(
                 document=file_id,
-                caption=f"📄 File {i}/{len(BOT2_FILES)} (Total: {item_count}/{total_items})"
+                caption=f"📄 File {i}/{len(BOT2_FILES)}"
             )
             sent_messages.append(msg.message_id)
             await asyncio.sleep(BATCH_DELAY)
@@ -357,25 +332,54 @@ async def bot2_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bot2_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"✅ Bot 2 (RDR2 Content) running\n"
-        f"📊 Mixed items: {len(BOT2_DATA)}, Files: {len(BOT2_FILES)}\n"
+        f"✅ Bot 2 (RDR2 Content) is running!\n"
+        f"📊 Mixed items: {len(BOT2_DATA)}\n"
+        f"📁 Files: {len(BOT2_FILES)}\n"
         f"👥 Total users: {bot2_stats['total_users']}\n"
         f"🔄 Total uses: {bot2_stats['total_uses']}"
     )
+
+async def bot2_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_data = bot2_stats["daily_stats"].get(today, {"uses": 0, "unique_users": set()})
+    today_users = len(today_data["unique_users"]) if isinstance(today_data["unique_users"], set) else today_data.get("unique_users", 0)
+    
+    sorted_users = sorted(
+        bot2_stats["users"].items(), 
+        key=lambda x: x[1]["total_uses"], 
+        reverse=True
+    )[:10]
+    
+    message = f"📊 **Bot 2 (RDR2 Content) Statistics**\n\n"
+    message += f"👥 Total Unique Users: {bot2_stats['total_users']}\n"
+    message += f"🔄 Total Uses: {bot2_stats['total_uses']}\n\n"
+    message += f"📅 Today: {today_data['uses']} uses ({today_users} users)\n\n"
+    
+    if sorted_users:
+        message += "🏆 Top 10 Users:\n"
+        for i, (user_id, data) in enumerate(sorted_users, 1):
+            name = data['first_name']
+            if data.get('username'):
+                name += f" (@{data['username']})"
+            message += f"{i}. {name}: {data['total_uses']} uses\n"
+    
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 # ============================================
 # MAIN
 # ============================================
 async def main():
+    # Bot 1
     app1 = ApplicationBuilder().token(BOT1_TOKEN).build()
     app1.add_handler(CommandHandler("start", bot1_start))
     app1.add_handler(CommandHandler("health", bot1_health))
-    app1.add_handler(CommandHandler("stats", bot1_stats))
+    app1.add_handler(CommandHandler("stats", bot1_stats_cmd))
     
+    # Bot 2
     app2 = ApplicationBuilder().token(BOT2_TOKEN).build()
     app2.add_handler(CommandHandler("start", bot2_start))
     app2.add_handler(CommandHandler("health", bot2_health))
-    app2.add_handler(CommandHandler("stats", bot2_stats))
+    app2.add_handler(CommandHandler("stats", bot2_stats_cmd))
     
     await app1.initialize()
     await app2.initialize()
@@ -384,8 +388,8 @@ async def main():
     
     logger.info("=" * 50)
     logger.info("Both bots started successfully!")
-    logger.info(f"Bot 1 (File Sender): {len(BOT1_FILES)} files | Users: {bot1_stats['total_users']} | Uses: {bot1_stats['total_uses']}")
-    logger.info(f"Bot 2 (RDR2 Content): {len(BOT2_DATA)} items + {len(BOT2_FILES)} files | Users: {bot2_stats['total_users']} | Uses: {bot2_stats['total_uses']}")
+    logger.info(f"Bot 1: /start, /health, /stats")
+    logger.info(f"Bot 2: /start, /health, /stats")
     logger.info("=" * 50)
     
     await app1.updater.start_polling(drop_pending_updates=True)
